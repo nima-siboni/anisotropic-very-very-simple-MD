@@ -710,8 +710,8 @@ void initialize(simulation_data& sim)
 
   // not updated for the anisotropic interaction
   // calculate the potential energy shift
-  double r_c = 3.0;//pow(2, 1./6.);
-  sim.potential.rr_c = r_c*r_c;
+  // double r_c = 3.0;//pow(2, 1./6.);
+  // sim.potential.rr_c = r_c*r_c;
   // double fval, epot_shift;
   // pair_potential(r_c*r_c, fval, epot_shift, sim);
   // sim.potential.shift_epot = epot_shift;
@@ -871,8 +871,8 @@ int main(int argc, char **argv)
 {
   simulation_data sim;
   simulation_data sim0;
-  if (argc!=15) {
-    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, eps, eps_1, eps_2, randomseed"<<endl;
+  if (argc!=16) {
+    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, eps, eps_1, eps_2, rcut, randomseed"<<endl;
     sim.Tmax=0;
   }else{
     sim.N = atoi(argv[1]);
@@ -912,8 +912,11 @@ int main(int argc, char **argv)
     sim.potential.epsilon_2 = atof (argv[13]);
     cout <<"# epsilon_2 of the potential "<<sim.potential.epsilon_2<<endl;
 
+    sim.potential.rr_c = atof (argv[14])*atof (argv[14]);
+    cout <<"# rcut^2 "<<sim.potential.rr_c<<endl;
+
     
-    srand(atoi(argv[14])+1);
+    srand(atoi(argv[15])+1);
     
     
     initialize(sim);
