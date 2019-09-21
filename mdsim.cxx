@@ -15,7 +15,7 @@ using namespace std;
 extern const double PI2=3.14159265359;
 
 //?? dont forget to exclude forces between walls
-
+//?? thermostating the angular velocities
 double logistic_map()
 {
   static double x = 0.5; // start value
@@ -55,6 +55,7 @@ struct simulation_data
   double potential_energy; // per particle
   double kinetic_energy;   // per particle
   double temperature;
+  double temperature_rot;
   double pressure;
   double virial_xy;
   double virial_yx;
@@ -67,14 +68,19 @@ struct simulation_data
   coordinate_type total_momentum;
   coordinate_type box_length;
   vector<coordinate_type> position;
+  vector<coordinate_type> orientation;
   vector<coordinate_type> velocity;
   vector<coordinate_type> force;
   vector<double> angle; // the angle of each particle
   vector<double> omega; // the anglular velocity of each particle
   vector<double> torque; // the torque on each particle
+  double I; //the moment of a sphere
   struct potential_data {
     double rr_c;        // square of cutoff of the potential cutoff
     double shift_epot;  // shift of the potential
+    double epsilon; //LJ
+    double epsilon_1;
+    double epsilon_2;
   } potential;
   double thermostat_temp_initial;
   double thermostat_temp_final;
@@ -102,17 +108,60 @@ struct simulation_data
  * particles: rr = dx*dx + dy*dy
  * Output is the normalized force f/r and the potential energy
  */
-void pair_potential(double rr, double& fval, double& epot, simulation_data const& sim)
-{
-  // try to calculate the exponents of r in an effective manner:
-  // reuse the expontentials of 1/r^2 for both 1/r^{12} and 1/r^{6}
-  double const epsilon = 1;
-  double rri = 1 / rr;          // 1/r^2
-  double r6i = rri * rri * rri; // 1/r^6
-  double eps_r6i = epsilon * r6i;
-  fval = 48 * rri * eps_r6i * (r6i - 0.5);
-  epot = 4 * eps_r6i * (r6i - 1) - sim.potential.shift_epot;
+// void pair_potential(double rr, double& fval, double& epot, simulation_data const& sim)
+// {
+//   // try to calculate the exponents of r in an effective manner:
+//   // reuse the expontentials of 1/r^2 for both 1/r^{12} and 1/r^{6}
+//   double const epsilon = 1;
+//   double rri = 1 / rr;          // 1/r^2
+//   double r6i = rri * rri * rri; // 1/r^6
+//   double eps_r6i = epsilon * r6i;
+//   fval = 48 * rri * eps_r6i * (r6i - 0.5);
+//   epot = 4 * eps_r6i * (r6i - 1) - sim.potential.shift_epot;
+// }
+
+
+void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const ui, coordinate_type const uj, double const e, double const e1, double const e2, coordinate_type& fij, double &tauij){
+  // Note that here dr should be r_i-rj
+
+  
+  // setting the forces to zero
+  fij.x = fij.y = 0;
+  
+  // some auxilary variables
+  double rr = dr.x*dr.x  + dr.y*dr.y ;
+  double r8 = rr * rr * rr * rr;
+  double r14=rr * rr * rr * r8;
+  double uiuj = ui.x*uj.x + ui.y*uj.y ;
+  double uidr = ui.x*dr.x + ui.y*dr.y ;
+  double ujdr = uj.x*dr.x + uj.y*dr.y ;
+  double p2uiuj = 1.5*(uiuj*uiuj-1.0);
+
+  // the first term of the eq. 10 in Physica A 328 (2003) 322-334
+  double tmp=48./r14;
+  fij.x += tmp*dr.x;
+  fij.y += tmp*dr.y;
+
+  // the second term of the eq. 10
+  fij.x += 60./r8 * e2 * (uidr*ui.x + ujdr*uj.x);
+  fij.y += 60./r8 * e2 * (uidr*ui.y + ujdr*uj.y);
+
+  // the third and the forth terms combined
+  tmp = -24.0/r8*( 1 + 5.0*e1*p2uiuj - 5.0*e2 + 10*e2*(uidr*uidr +ujdr*ujdr)/rr);
+  fij.x += tmp*dr.x;
+  fij.y += tmp*dr.y;
+
+  fij.x *= e; 
+  fij.y *= e;
+
+  // the torque
+  double crossproduct = ui.x*uj.y - uj.x*ui.y;
+  tauij = 15.0/r8*rr * e1 * uiuj  * crossproduct ;
+  crossproduct = ui.x*dr.y - dr.x*ui.y;
+  tauij += 15.0/r8*rr *e2 * uidr * crossproduct ;
+  
 }
+
 
 /**
  * Equates two simulation_data
@@ -137,26 +186,44 @@ void equality(simulation_data& sim, simulation_data& sim0)
 void calculate_force_and_torque(simulation_data& sim)
 {
   // reset the potential energy, as it will be recalcuated in this step
-  double epot = 0;
+  //  double epot = 0;
   // reset the force and torque array
   sim.virial_pair_xx =  sim.virial_pair_yy =  sim.virial_pair_yx =  sim.virial_pair_xy = 0;
   sim.virial_xx =  sim.virial_yy =  sim.virial_yx =  sim.virial_xy = 0;
 
+
+  // some constants:
+  double epsilon = sim.potential.epsilon;
+  double epsilon1 = sim.potential.epsilon_1;
+  double epsilon2 = sim.potential.epsilon_2;
+  
   for (int i = 0; i < sim.N; ++i) {
     sim.force[i].x = 0;
     sim.force[i].y = 0;
     sim.torque[i] = 0;
   }
 
+  // lets calculate the components of the orientation;
+  // with components it is easier to calculate the dot products
+  // but for integration it is easier to integrate the angles
+  // so angles are used for the integration but components are used for
+  // force calculation. In general the orientations are trustable to be always updated.
+  
   for (int i = 0; i < sim.N; ++i) {
-    coordinate_type& x1 = sim.position[i];
-    //double& theta_i=sim.angle[i]; //theta_i
+    coordinate_type& ui = sim.orientation[i];
+    ui.x = cos(sim.angle[i]);
+    ui.y = sin(sim.angle[i]);
+  }
+  
+  for (int i = 0; i < sim.N; ++i) {
+    coordinate_type& x1 = sim.position[i];//here 1 is i and 2 is j; bad notation
+    coordinate_type& ui = sim.orientation[i];
     // calculate the interaction beween two particles NOT only once
     // (ie. NOT using newtons third law)
     for(int j = 0; j < sim.N; ++j) {
-      double pot, fval;
       coordinate_type& x2 = sim.position[j];
-      //double& theta_j=sim.angle[j]; //theta_j
+      coordinate_type& uj = sim.orientation[j];
+   
       // distance between two particles
       coordinate_type dx;
       dx.x = x1.x - x2.x;
@@ -187,24 +254,27 @@ void calculate_force_and_torque(simulation_data& sim)
 	continue;
 
       // calculate pair interaction
-      pair_potential(rr, fval, pot, sim);
+      //pair_potential(rr, fval, pot, sim);
       //pot is here the potential energy between the pair ij
-      epot += pot;
+      //epot += pot;
 
-      // convert F/r into vectorial value
-      coordinate_type f;
-      // f is here the force between pair ij
-      f.x = fval*dx.x;
-      f.y = fval*dx.y;
+       coordinate_type f;
+      double tau=0;
+      // f is here the force on particle i by particle j, same is true for tau
+      // note that dx should be dx = xi-xj
+      force_and_torque_on_i_by_j(dx, ui, uj, epsilon, epsilon1, epsilon2, f, tau);
 
+      
       // set the force value 
       sim.force[i].x += f.x;
+      //cout<<f.x<<endl;
       sim.force[i].y += f.y;
-      sim.torque[i]+=0;
+      sim.torque[i]+=tau;
 
       // Here we calculate the different components of the virial expression for EACH PAIR;
       // i.e. we are calculating f_{ij}.r_{ij}
       // here I am including only those pair which are liquid
+      //?? this part should be changed later to only consider the parallel component of the force
       if (j>i && sim.type[i]==0 && sim.type[j]==0){
 	sim.virial_pair_xx += f.x*dx.x;
 	sim.virial_pair_xy += f.x*dx.y;
@@ -238,7 +308,7 @@ void calculate_force_and_torque(simulation_data& sim)
   }
   
   // we want the potential energy per particle
-  sim.potential_energy = epot/sim.N;//??
+  sim.potential_energy = 0;//??
 
    double area = 0;
    if (sim.wall_flag==0 || sim.wall_flag ==1)
@@ -305,7 +375,7 @@ void md_step(simulation_data& sim)
   double const dt = sim.dt;
   double temp_old = 0;
   
-  double inv_I = 1/1.0; //angular moment I as in torque = I * d2 theta/dt2
+  double inv_I = 1/sim.I; //angular moment I as in torque = I * d2 theta/dt2
   double wall_v=sim.shear_rate*(sim.box_length.y/2.0-sim.wall_thickness);
 
   
@@ -391,7 +461,9 @@ void md_step(simulation_data& sim)
     }
 
   }
-    
+
+  
+  
 }
 
 
@@ -434,17 +506,23 @@ void thermostat(simulation_data& sim)
 {
   double ekin_yy = 0;
   double ekin_xx = 0;
+  double ekin_rot = 0;
+  double I = sim.I;
   for (int i = 0; i < sim.N; ++i) {
     coordinate_type const& vel = sim.velocity[i];
+    double const& omega = sim.omega[i];
     // assume unit mass
+    
     if (sim.type[i]==0) {
       ekin_yy +=  vel.y*vel.y;
       ekin_xx +=  vel.x*vel.x;
+      ekin_rot += omega*omega*I;
     }
   }
   // missing factor of two, and divide by the number of particles
   ekin_xx /= 1.*sim.nr_liq;
   ekin_yy /= 1.*sim.nr_liq;
+  ekin_rot /= 1.*sim.nr_liq;
   sim.kinetic_energy = 0.5*(ekin_xx+ekin_yy);
 
   if (sim.shear_rate==0){
@@ -454,6 +532,8 @@ void thermostat(simulation_data& sim)
     {
       sim.temperature = ekin_yy;
     }
+
+  sim.temperature_rot = ekin_rot;
   
   double desired_temp;
   if (sim.step < sim.timestep_before_ramping_temp){
@@ -472,6 +552,13 @@ void thermostat(simulation_data& sim)
       }
       vel.y = vel.y*scale;
     }
+  }
+
+  scale=sqrt(desired_temp/sim.temperature_rot);
+  for (int i = 0; i < sim.N; ++i) {
+    double & omega = sim.omega[i];
+    // assume unit mass
+    omega = omega*scale;
   }
 }
  
@@ -605,6 +692,7 @@ void initialize(simulation_data& sim)
   sim.temperature = 1;
   // set up arrays
   sim.position.resize(sim.N);
+  sim.orientation.resize(sim.N);
   sim.velocity.resize(sim.N);
   sim.force.resize(sim.N);
   sim.angle.resize(sim.N); // the angle of each particle
@@ -612,18 +700,21 @@ void initialize(simulation_data& sim)
   sim.torque.resize(sim.N); // the torque on each particle
   sim.type.resize(sim.N);
   sim.wall_flag = 0;
+  sim.I = 1.0/8.0; //I = 1/2 m r^2
   if(sim.equilibration_before_wall_formation==0) sim.equilibration_before_wall_formation=1; //default value
  
   // sim.box_length.x = L;
   // sim.box_length.y = L;
   // intitialize the potential
   sim.potential.shift_epot = 0;
+
+  // not updated for the anisotropic interaction
   // calculate the potential energy shift
-  double r_c = pow(2, 1./6.);
+  double r_c = 3.0;//pow(2, 1./6.);
   sim.potential.rr_c = r_c*r_c;
-  double fval, epot_shift;
-  pair_potential(r_c*r_c, fval, epot_shift, sim);
-  sim.potential.shift_epot = epot_shift;
+  // double fval, epot_shift;
+  // pair_potential(r_c*r_c, fval, epot_shift, sim);
+  // sim.potential.shift_epot = epot_shift;
 
   // set the starting positions
   set_initial_phase_space(sim);
@@ -681,6 +772,7 @@ void output_thermodynamic_variables(simulation_data& sim){
 		  << "\n" << "# 17- fwall_up.y"
 		  << "\n" << "# 18- fwall_down.x"
 		  << "\n" << "# 19- fwall_down.y"
+		  << "\n" << "# 20- temperature rotational"
 		  << endl;
   }
   else{
@@ -689,20 +781,25 @@ void output_thermodynamic_variables(simulation_data& sim){
   
   double ekin_xx = 0;
   double ekin_yy = 0;
+  double ekin_rot = 0;
+  double I = sim.I;
   sim.total_momentum = coordinate_type();
   for (int i = 0; i < sim.N; ++i) {
 
     if (sim.type[i]==0) {
       coordinate_type const& vel = sim.velocity[i];
+      double & omega = sim.omega[i];
       sim.total_momentum.x += vel.x;
       sim.total_momentum.y += vel.y;
       ekin_yy +=  vel.y*vel.y;
       ekin_xx +=  vel.x*vel.x;
+      ekin_rot += I*omega*omega;
     }
   }
   // missing factor of two, and divide by the number of particles
   ekin_xx /= 1.*sim.nr_liq;
   ekin_yy /= 1.*sim.nr_liq;
+  ekin_rot /= 1.*sim.nr_liq;
   sim.kinetic_energy = 0.5*(ekin_xx+ekin_yy);
 
   if (sim.shear_rate==0){
@@ -712,7 +809,8 @@ void output_thermodynamic_variables(simulation_data& sim){
     {
       sim.temperature = ekin_yy;
     }
-  
+  sim.temperature_rot = ekin_rot;
+
   double area=0;
   if (sim.wall_flag==0 || sim.wall_flag ==1)
     area= sim.box_length.x * (sim.box_length.y-sim.wall_flag*2*sim.wall_thickness);
@@ -763,6 +861,7 @@ void output_thermodynamic_variables(simulation_data& sim){
 		 << " " << sim.fwall_up.y
     		 << " " << sim.fwall_down.x
     		 << " " << sim.fwall_down.y
+    		 << " " << sim.temperature_rot 
 		 << endl;
       
 }
@@ -772,8 +871,8 @@ int main(int argc, char **argv)
 {
   simulation_data sim;
   simulation_data sim0;
-  if (argc!=12) {
-    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, randomseed"<<endl;
+  if (argc!=15) {
+    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, eps, eps_1, eps_2, randomseed"<<endl;
     sim.Tmax=0;
   }else{
     sim.N = atoi(argv[1]);
@@ -804,7 +903,17 @@ int main(int argc, char **argv)
     sim.equilibration_before_wall_formation=atof(argv[10]);
     cout<<"# Equilibration before wall formation "<<sim.equilibration_before_wall_formation<<endl;
 
-    srand(atoi(argv[11])+1);
+    sim.potential.epsilon = atof (argv[11]);
+    cout <<"# epsilon of the potential "<<sim.potential.epsilon<<endl;
+
+    sim.potential.epsilon_1 = atof (argv[12]);
+    cout <<"# epsilon_1 of the potential "<<sim.potential.epsilon_1<<endl;
+
+    sim.potential.epsilon_2 = atof (argv[13]);
+    cout <<"# epsilon_2 of the potential "<<sim.potential.epsilon_2<<endl;
+
+    
+    srand(atoi(argv[14])+1);
     
     
     initialize(sim);
