@@ -51,6 +51,7 @@ struct simulation_data
   double dt;    // delta t
   double dteq;    // delta t for euilibration of OU process
   int    step;  // current simulation step
+  double Tmax; // the total simulation time in LJ units
   double potential_energy; // per particle
   double kinetic_energy;   // per particle
   double temperature;
@@ -75,8 +76,10 @@ struct simulation_data
     double rr_c;        // square of cutoff of the potential cutoff
     double shift_epot;  // shift of the potential
   } potential;
-  double thermostat_temp;
-
+  double thermostat_temp_initial;
+  double thermostat_temp_final;
+  //up to this timestep temperature is kept at temp initial, then it is ramped linearly up to temp final
+  double timestep_before_ramping_temp; 
   /* wall related */
   vector<int> type; /* if fluid it is type 0, if upper wall or lower wall it is type 1 or 2 (which is which should be checked*/
   int wall_flag;
@@ -452,8 +455,14 @@ void thermostat(simulation_data& sim)
       sim.temperature = ekin_yy;
     }
   
-
-  double scale=sqrt(sim.thermostat_temp/sim.temperature);
+  double desired_temp;
+  if (sim.step < sim.timestep_before_ramping_temp){
+    desired_temp = sim.thermostat_temp_initial;
+  } else {
+    desired_temp = sim.thermostat_temp_initial + (sim.thermostat_temp_final- sim.thermostat_temp_initial)*(sim.step-sim.timestep_before_ramping_temp)/(sim.Tmax/sim.dt-sim.timestep_before_ramping_temp);
+  }
+  
+  double scale=sqrt(desired_temp/sim.temperature);
   for (int i = 0; i < sim.N; ++i) {
     coordinate_type & vel = sim.velocity[i];
     // assume unit mass
@@ -654,24 +663,24 @@ void output_thermodynamic_variables(simulation_data& sim){
   if (sim.step==0){
     thermodynamics.open("thermodynamics");
     thermodynamics<<"#1 time"
-		  << "\n" << "#2- temp" 
-		  << "\n" << "#3- kin energy"
-		  << "\n" << "#4- potentialenergy??"
-		  << "\n" << "#5- pressure"
-		  << "\n" << "#6- virial_xx"
-		  << "\n" << "#7- virial_xy"
-		  << "\n" << "#8- virial_yx"
-		  << "\n" << "#9- virial_yy"
-		  << "\n" << "#10- virial_pair_xx"
-		  << "\n" << "#11- virial_pair_xy"
-		  << "\n" << "#12- virial_pair_yx"
-		  << "\n" << "#13- virial_pair_yy"
-		  << "\n" << "#14- total_momentum.x"
-		  << "\n" << "#15- total_momentum.y"
-		  << "\n" << "#16- fwall_up.x"
-		  << "\n" << "#17- fwall_up.y"
-		  << "\n" << "#18- fwall_down.x"
-		  << "\n" << "#19- fwall_down.y"
+		  << "\n" << "# 2- temp" 
+		  << "\n" << "# 3- kin energy"
+		  << "\n" << "# 4- potentialenergy??"
+		  << "\n" << "# 5- pressure"
+		  << "\n" << "# 6- virial_xx"
+		  << "\n" << "# 7- virial_xy"
+		  << "\n" << "# 8- virial_yx"
+		  << "\n" << "# 9- virial_yy"
+		  << "\n" << "# 10- virial_pair_xx"
+		  << "\n" << "# 11- virial_pair_xy"
+		  << "\n" << "# 12- virial_pair_yx"
+		  << "\n" << "# 13- virial_pair_yy"
+		  << "\n" << "# 14- total_momentum.x"
+		  << "\n" << "# 15- total_momentum.y"
+		  << "\n" << "# 16- fwall_up.x"
+		  << "\n" << "# 17- fwall_up.y"
+		  << "\n" << "# 18- fwall_down.x"
+		  << "\n" << "# 19- fwall_down.y"
 		  << endl;
   }
   else{
@@ -761,12 +770,11 @@ void output_thermodynamic_variables(simulation_data& sim){
 
 int main(int argc, char **argv)
 {
-  double Tmax;
   simulation_data sim;
   simulation_data sim0;
-  if (argc!=10) {
-    cout<<"Please enter Nparticle, system_size, dt,Tmax, temperature, wall thickness, shear rate, equilibration before wall formation, randomseed"<<endl;
-    Tmax=0;
+  if (argc!=12) {
+    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, randomseed"<<endl;
+    sim.Tmax=0;
   }else{
     sim.N = atoi(argv[1]);
     cout<<"# N is "<<sim.N<<endl;
@@ -775,22 +783,28 @@ int main(int argc, char **argv)
     cout<<"# Lx and Ly are "<<sim.box_length.x<<" "<<sim.box_length.y<<endl;
     sim.dt=atof(argv[3]); 
     cout<<"# dt is "<<sim.dt<<endl;
-    Tmax=atof(argv[4]);
-    cout<<"# Tmax is "<<Tmax<<endl;
+    sim.Tmax=atof(argv[4]);
+    cout<<"# simulation time is "<<sim.Tmax<<endl;
 
-    sim.thermostat_temp = atof(argv[5]);
-    cout<<"# Tbath "<<sim.thermostat_temp<<endl;
+    sim.thermostat_temp_initial = atof(argv[5]);
+    cout<<"# Tbath initial "<<sim.thermostat_temp_initial<<endl;
 
-    sim.wall_thickness=atof(argv[6]);
+    sim.thermostat_temp_final = atof(argv[6]);
+    cout<<"# Tbath initial "<<sim.thermostat_temp_final<<endl;
+
+    sim.timestep_before_ramping_temp = (int)(atof(argv[7])/sim.dt);
+    cout<<" # time to start ramping temperature from Tbath initial to final "<<sim.timestep_before_ramping_temp*sim.dt<<endl; 
+
+    sim.wall_thickness=atof(argv[8]);
     cout<<"# wall thickness is "<<sim.wall_thickness<<endl;
 
-    sim.shear_rate=atof(argv[7]);
+    sim.shear_rate=atof(argv[9]);
     cout<<"# shear rate is "<<sim.shear_rate<<endl;
 
-    sim.equilibration_before_wall_formation=atof(argv[8]);
+    sim.equilibration_before_wall_formation=atof(argv[10]);
     cout<<"# Equilibration before wall formation "<<sim.equilibration_before_wall_formation<<endl;
 
-    srand(atoi(argv[9])+1);
+    srand(atoi(argv[11])+1);
     
     
     initialize(sim);
@@ -806,7 +820,7 @@ int main(int argc, char **argv)
   equality(sim0,sim);
   write_phase_space(sim);
 
-  int steps = Tmax/sim.dt;
+  int steps = sim.Tmax/sim.dt;
   int thermostating_interval=(int)(.2/sim.dt);
   int dump_interval=(int)(0.1/sim.dt);
   cout << "Simulating " << steps << " steps.." << endl;
