@@ -135,7 +135,8 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   double uiuj = ui.x*uj.x + ui.y*uj.y ;
   double uidr = ui.x*dr.x + ui.y*dr.y ;
   double ujdr = uj.x*dr.x + uj.y*dr.y ;
-  double p2uiuj = 1.5*(uiuj*uiuj-1.0);
+  //double p2uiuj = 1.5*(uiuj*uiuj-1.0);
+  double p1uiuj = uiuj;
 
   // the first term of the eq. 10 in Physica A 328 (2003) 322-334
   double tmp=48./r14;
@@ -147,7 +148,7 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   fij.y += 60./r8 * e2 * (uidr*ui.y + ujdr*uj.y);
 
   // the third and the forth terms combined
-  tmp = -24.0/r8*( 1 + 5.0*e1*p2uiuj - 5.0*e2 + 10*e2*(uidr*uidr +ujdr*ujdr)/rr);
+  tmp = -24.0/r8*( 1 + 5.0*e1*p1uiuj - 5.0*e2 + 10*e2*(uidr*uidr +ujdr*ujdr)/rr);
   fij.x += tmp*dr.x;
   fij.y += tmp*dr.y;
 
@@ -156,7 +157,8 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
 
   // the torque
   double crossproduct = ui.x*uj.y - uj.x*ui.y;
-  tauij = 15.0/r8*rr * e1 * uiuj  * crossproduct ;
+  //tauij = 15.0/r8*rr * e1 * uiuj  * crossproduct ; //for Hess potential
+  tauij = 5.0/r8*rr * e1 * 1  * crossproduct ; //for a potential similar to Hess bu with P_1(ui.uj)
   crossproduct = ui.x*dr.y - dr.x*ui.y;
   tauij += 15.0/r8*rr *e2 * uidr * crossproduct ;
   
