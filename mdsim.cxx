@@ -65,6 +65,9 @@ struct simulation_data
   double virial_pair_xx;
   double virial_pair_yy;
   double virial_pair_yx;
+  double virial_pair_first;
+  double virial_pair_second;
+  double virial_pair_third;
   coordinate_type total_momentum;
   coordinate_type box_length;
   vector<coordinate_type> position;
@@ -192,7 +195,7 @@ void calculate_force_and_torque(simulation_data& sim)
   // reset the force and torque array
   sim.virial_pair_xx =  sim.virial_pair_yy =  sim.virial_pair_yx =  sim.virial_pair_xy = 0;
   sim.virial_xx =  sim.virial_yy =  sim.virial_yx =  sim.virial_xy = 0;
-
+  sim.virial_pair_first = sim.virial_pair_second = sim.virial_pair_third = 0;
 
   // some constants:
   double epsilon = sim.potential.epsilon;
@@ -282,6 +285,31 @@ void calculate_force_and_torque(simulation_data& sim)
 	sim.virial_pair_xy += f.x*dx.y;
 	sim.virial_pair_yx += f.y*dx.x;
 	sim.virial_pair_yy += f.y*dx.y;
+
+	//this part shoud be somehow hidden in a function later
+
+	double r6=rr*rr*rr;
+	double sinimj=sin(sim.angle[i]-sim.angle[j]);
+	double sinipj=sin(sim.angle[i]+sim.angle[j]);
+	double potential_factor = -1./r6*5*epsilon1; // This is a derivative of the potential with respect to ui.uj
+	sim.virial_pair_first +=  potential_factor * sinimj * sinimj * sinipj;
+
+	// dx is actually ri-rj instead of rj-ri, and both dx and dy needs
+	// to be multiplied by -1.0 for calculating theta;
+	double theta = atan2(-1.0*dx.y,-1.0*dx.x); 
+	if (theta<0) theta = PI2+theta;
+
+	double sintmi = sin(theta-sim.angle[i]);
+	double sintpi = sin(theta+sim.angle[i]);
+	double costmi = cos(theta-sim.angle[i]);
+	potential_factor = -1./r6*15*epsilon2 * costmi; // This is a derivative of the potential with respect to ui.qij
+	sim.virial_pair_second +=  potential_factor * sintmi * sintmi * sintpi;
+
+	double sintmj = sin(theta-sim.angle[j]);
+	double sintpj = sin(theta+sim.angle[j]);
+	double costmj = cos(theta-sim.angle[j]);
+	potential_factor = -1./r6*15*epsilon2 * costmj; // This is a derivative of the potential with respect to uj.qij
+	sim.virial_pair_third +=  potential_factor * sintmj * sintmj * sintpj;
       }
 
       
@@ -324,6 +352,9 @@ void calculate_force_and_torque(simulation_data& sim)
    sim.virial_pair_yy /= area;
    sim.virial_pair_xy /= area;
    sim.virial_pair_yx /= area;
+   sim.virial_pair_first /= area;
+   sim.virial_pair_second /= area;
+   sim.virial_pair_third /= area;
   
 }
 
@@ -775,6 +806,9 @@ void output_thermodynamic_variables(simulation_data& sim){
 		  << "\n" << "# 18- fwall_down.x"
 		  << "\n" << "# 19- fwall_down.y"
 		  << "\n" << "# 20- temperature rotational"
+		  << "\n" << "# 21- virial first term"
+		  << "\n" << "# 22- virial second term"
+		  << "\n" << "# 23- virial third term"
 		  << endl;
   }
   else{
@@ -863,7 +897,10 @@ void output_thermodynamic_variables(simulation_data& sim){
 		 << " " << sim.fwall_up.y
     		 << " " << sim.fwall_down.x
     		 << " " << sim.fwall_down.y
-    		 << " " << sim.temperature_rot 
+    		 << " " << sim.temperature_rot
+		 << " " << sim.virial_pair_first
+		 << " " << sim.virial_pair_second
+		 << " " << sim.virial_pair_third
 		 << endl;
       
 }
