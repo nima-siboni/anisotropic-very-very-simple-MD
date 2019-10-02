@@ -83,7 +83,6 @@ struct simulation_data
     double shift_epot;  // shift of the potential
     double epsilon; //LJ
     double epsilon_1;
-    double epsilon_2;
   } potential;
   double thermostat_temp_initial;
   double thermostat_temp_final;
@@ -124,46 +123,49 @@ struct simulation_data
 // }
 
 
-void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const ui, coordinate_type const uj, double const e, double const e1, double const e2, coordinate_type& fij, double &tauij){
-  // Note that here dr should be r_i-rj
+void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const ui, coordinate_type const uj, double const e, double const e1, coordinate_type& fij, double &tauij){
+
+  // Note that here dr is r_j-ri
 
   
   // setting the forces to zero
   fij.x = fij.y = 0;
   
   // some auxilary variables
+
   double rr = dr.x*dr.x  + dr.y*dr.y ;
-  double r8 = rr * rr * rr * rr;
-  double r14=rr * rr * rr * r8;
+  double r4 = rr * rr;
   double uiuj = ui.x*uj.x + ui.y*uj.y ;
-  double uidr = ui.x*dr.x + ui.y*dr.y ;
-  double ujdr = uj.x*dr.x + uj.y*dr.y ;
-  //double p2uiuj = 1.5*(uiuj*uiuj-1.0);
-  double p1uiuj = uiuj;
+  double uidr = ui.x*dr.x + ui.y*dr.y; 
+  double ujdr = uj.x*dr.x + uj.y*dr.y;
+  double sigma_eff = 1.0*(1 + 0.5*e1*(uidr*uidr+ujdr*ujdr)/rr);
+  double rreffinv = sigma_eff*sigma_eff/rr;
+  double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
+
 
   // the first term of the eq. 10 in Physica A 328 (2003) 322-334
-  double tmp=48./r14;
-  fij.x += tmp*dr.x;
+  double tmp = -12.*reff12inv/rr;
+  fij.x += tmp*dr.x; 
   fij.y += tmp*dr.y;
 
-  // the second term of the eq. 10
-  fij.x += 60./r8 * e2 * (uidr*ui.x + ujdr*uj.x);
-  fij.y += 60./r8 * e2 * (uidr*ui.y + ujdr*uj.y);
+  tmp = -12.*reff12inv*e1/sigma_eff*(uidr*uidr + ujdr*ujdr)/r4; //sigma_eff is only correct if sigma is 1; here we need the ration of sigma eff and sigma
+  fij.x +=  tmp*dr.x;
+  fij.y +=  tmp*dr.y;
 
-  // the third and the forth terms combined
-  tmp = -24.0/r8*( 1 + 5.0*e1*p1uiuj - 5.0*e2 + 10*e2*(uidr*uidr +ujdr*ujdr)/rr);
-  fij.x += tmp*dr.x;
-  fij.y += tmp*dr.y;
+  tmp = 12.*reff12inv*e1/sigma_eff/rr;
+  fij.x += tmp* uidr*ui.x;
+  fij.y += tmp* uidr*ui.y;
+
+  fij.x += tmp* ujdr*uj.x;
+  fij.y += tmp* ujdr*uj.y;
 
   fij.x *= e; 
   fij.y *= e;
 
   // the torque
-  double crossproduct = ui.x*uj.y - uj.x*ui.y;
-  //tauij = 15.0/r8*rr * e1 * uiuj  * crossproduct ; //for Hess potential
-  tauij = 5.0/r8*rr * e1 * 1  * crossproduct ; //for a potential similar to Hess bu with P_1(ui.uj)
-  crossproduct = ui.x*dr.y - dr.x*ui.y;
-  tauij += 15.0/r8*rr *e2 * uidr * crossproduct ;
+  double crossproduct = -ui.x*dr.y + dr.x*ui.y; //r cross ui
+  tmp = 12.*reff12inv*e1/sigma_eff/rr;
+  tauij += tmp * uidr * crossproduct ;
   
 }
 
@@ -200,7 +202,6 @@ void calculate_force_and_torque(simulation_data& sim)
   // some constants:
   double epsilon = sim.potential.epsilon;
   double epsilon1 = sim.potential.epsilon_1;
-  double epsilon2 = sim.potential.epsilon_2;
   
   for (int i = 0; i < sim.N; ++i) {
     sim.force[i].x = 0;
@@ -221,18 +222,18 @@ void calculate_force_and_torque(simulation_data& sim)
   }
   
   for (int i = 0; i < sim.N; ++i) {
-    coordinate_type& x1 = sim.position[i];//here 1 is i and 2 is j; bad notation
+    coordinate_type& xi = sim.position[i];//here 1 is i and 2 is j; bad notation
     coordinate_type& ui = sim.orientation[i];
     // calculate the interaction beween two particles NOT only once
     // (ie. NOT using newtons third law)
     for(int j = 0; j < sim.N; ++j) {
-      coordinate_type& x2 = sim.position[j];
+      coordinate_type& xj = sim.position[j];
       coordinate_type& uj = sim.orientation[j];
    
       // distance between two particles
       coordinate_type dx;
-      dx.x = x1.x - x2.x;
-      dx.y = x1.y - x2.y;
+      dx.x = xj.x - xi.x;
+      dx.y = xj.y - xi.y;
       
       // This is gonna exclude the force from particles of one wall on the other one
       if ((sim.type[i]*sim.type[j])!=0) 	continue;
@@ -267,7 +268,7 @@ void calculate_force_and_torque(simulation_data& sim)
       double tau=0;
       // f is here the force on particle i by particle j, same is true for tau
       // note that dx should be dx = xi-xj
-      force_and_torque_on_i_by_j(dx, ui, uj, epsilon, epsilon1, epsilon2, f, tau);
+      force_and_torque_on_i_by_j(dx, ui, uj, epsilon, epsilon1, f, tau);
 
       
       // set the force value 
@@ -281,34 +282,34 @@ void calculate_force_and_torque(simulation_data& sim)
       // here I am including only those pair which are liquid
       //?? this part should be changed later to only consider the parallel component of the force
       if (j>i && sim.type[i]==0 && sim.type[j]==0){
-	sim.virial_pair_xx += f.x*dx.x;
-	sim.virial_pair_xy += f.x*dx.y;
-	sim.virial_pair_yx += f.y*dx.x;
-	sim.virial_pair_yy += f.y*dx.y;
+	sim.virial_pair_xx -= f.x*dx.x;
+	sim.virial_pair_xy -= f.x*dx.y;
+	sim.virial_pair_yx -= f.y*dx.x;
+	sim.virial_pair_yy -= f.y*dx.y;
 
 	//this part shoud be somehow hidden in a function later
 
 	double r6=rr*rr*rr;
 	double sinimj=sin(sim.angle[i]-sim.angle[j]);
 	double sinipj=sin(sim.angle[i]+sim.angle[j]);
-	double potential_factor = -1./r6*5*epsilon1; // This is a derivative of the potential with respect to ui.uj
+	double potential_factor = 1; // This is a derivative of the potential with respect to ui.uj
 	sim.virial_pair_first +=  potential_factor * sinimj * sinimj * sinipj;
 
 	// dx is actually ri-rj instead of rj-ri, and both dx and dy needs
 	// to be multiplied by -1.0 for calculating theta;
-	double theta = atan2(-1.0*dx.y,-1.0*dx.x); 
+	double theta = atan2(dx.y,dx.x); 
 	if (theta<0) theta = PI2+theta;
 
 	double sintmi = sin(theta-sim.angle[i]);
 	double sintpi = sin(theta+sim.angle[i]);
 	double costmi = cos(theta-sim.angle[i]);
-	potential_factor = -1./r6*15*epsilon2 * costmi; // This is a derivative of the potential with respect to ui.qij
+	potential_factor = 1.; // This is a derivative of the potential with respect to ui.qij
 	sim.virial_pair_second +=  potential_factor * sintmi * sintmi * sintpi;
 
 	double sintmj = sin(theta-sim.angle[j]);
 	double sintpj = sin(theta+sim.angle[j]);
 	double costmj = cos(theta-sim.angle[j]);
-	potential_factor = -1./r6*15*epsilon2 * costmj; // This is a derivative of the potential with respect to uj.qij
+	potential_factor = 1.; // This is a derivative of the potential with respect to uj.qij
 	sim.virial_pair_third +=  potential_factor * sintmj * sintmj * sintpj;
       }
 
@@ -910,8 +911,8 @@ int main(int argc, char **argv)
 {
   simulation_data sim;
   simulation_data sim0;
-  if (argc!=16) {
-    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, eps, eps_1, eps_2, rcut, randomseed"<<endl;
+  if (argc!=15) {
+    cout<<"Please enter Nparticle, system_size, dt, sim-time, T-initial, T-final, time to start changin temp, wall thickness, shear rate, equilibration before wall formation, eps, eps_1, rcut, randomseed"<<endl;
     sim.Tmax=0;
   }else{
     sim.N = atoi(argv[1]);
@@ -948,14 +949,11 @@ int main(int argc, char **argv)
     sim.potential.epsilon_1 = atof (argv[12]);
     cout <<"# epsilon_1 of the potential "<<sim.potential.epsilon_1<<endl;
 
-    sim.potential.epsilon_2 = atof (argv[13]);
-    cout <<"# epsilon_2 of the potential "<<sim.potential.epsilon_2<<endl;
-
-    sim.potential.rr_c = atof (argv[14])*atof (argv[14]);
+    sim.potential.rr_c = atof (argv[13])*atof (argv[13]);
     cout <<"# rcut^2 "<<sim.potential.rr_c<<endl;
 
     
-    srand(atoi(argv[15])+1);
+    srand(atoi(argv[14])+1);
     
     
     initialize(sim);
