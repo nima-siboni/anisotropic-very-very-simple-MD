@@ -130,42 +130,49 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   
   // setting the forces to zero
   fij.x = fij.y = 0;
+
+  // setting the torque to zero
+  tauij = 0;
   
   // some auxilary variables
 
   double rr = dr.x*dr.x  + dr.y*dr.y ;
-  double r4 = rr * rr;
-  double uiuj = ui.x*uj.x + ui.y*uj.y ;
+  //double uiuj = ui.x*uj.x + ui.y*uj.y ;
   double uidr = ui.x*dr.x + ui.y*dr.y; 
   double ujdr = uj.x*dr.x + uj.y*dr.y;
   double sigma_eff = 1.0*(1 + 0.5*e1*(uidr*uidr+ujdr*ujdr)/rr);
   double rreffinv = sigma_eff*sigma_eff/rr;
   double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
 
+  fij.x =  uidr*ui.x + ujdr*uj.x;
+  fij.y =  uidr*ui.y + ujdr*uj.y;
 
-  // the first term of the eq. 10 in Physica A 328 (2003) 322-334
-  double tmp = -12.*reff12inv/rr;
-  fij.x += tmp*dr.x; 
+  double tmp = -1*(uidr*uidr + ujdr*ujdr)/rr;
+  fij.x += tmp*dr.x;
   fij.y += tmp*dr.y;
 
-  tmp = -12.*reff12inv*e1/sigma_eff*(uidr*uidr + ujdr*ujdr)/r4; //sigma_eff is only correct if sigma is 1; here we need the ration of sigma eff and sigma
-  fij.x +=  tmp*dr.x;
-  fij.y +=  tmp*dr.y;
+  tmp = e1/sigma_eff;
+  // the first term of the eq. 10 in Physica A 328 (2003) 322-334
+  fij.x *= tmp; 
+  fij.y *= tmp;
 
-  tmp = 12.*reff12inv*e1/sigma_eff/rr;
-  fij.x += tmp* uidr*ui.x;
-  fij.y += tmp* uidr*ui.y;
+  fij.x +=  -1.0*dr.x;
+  fij.y +=  -1.0*dr.y;
 
-  fij.x += tmp* ujdr*uj.x;
-  fij.y += tmp* ujdr*uj.y;
+  tmp = 12.*reff12inv/rr; //sigma_eff is only correct if sigma is 1; here we need the ration of sigma eff and sigma
+
+
+  fij.x *= tmp; 
+  fij.y *= tmp;
 
   fij.x *= e; 
   fij.y *= e;
 
+  
   // the torque
   double crossproduct = -ui.x*dr.y + dr.x*ui.y; //r cross ui
-  tmp = 12.*reff12inv*e1/sigma_eff/rr;
-  tauij += tmp * uidr * crossproduct ;
+  tmp = 12.*e*reff12inv/rr/sigma_eff;
+  tauij = e1 * tmp * uidr * crossproduct ;
   
 }
 
@@ -264,7 +271,7 @@ void calculate_force_and_torque(simulation_data& sim)
       //pot is here the potential energy between the pair ij
       //epot += pot;
 
-       coordinate_type f;
+      coordinate_type f;
       double tau=0;
       // f is here the force on particle i by particle j, same is true for tau
       // note that dx should be dx = xi-xj
@@ -289,10 +296,10 @@ void calculate_force_and_torque(simulation_data& sim)
 
 	//this part shoud be somehow hidden in a function later
 
-	double r6=rr*rr*rr;
 	double sinimj=sin(sim.angle[i]-sim.angle[j]);
 	double sinipj=sin(sim.angle[i]+sim.angle[j]);
-	double potential_factor = 1; // This is a derivative of the potential with respect to ui.uj
+
+	double potential_factor = 1.0; // This is a derivative of the potential with respect to ui.uj
 	sim.virial_pair_first +=  potential_factor * sinimj * sinimj * sinipj;
 
 	// dx is actually ri-rj instead of rj-ri, and both dx and dy needs
@@ -302,15 +309,29 @@ void calculate_force_and_torque(simulation_data& sim)
 
 	double sintmi = sin(theta-sim.angle[i]);
 	double sintpi = sin(theta+sim.angle[i]);
-	double costmi = cos(theta-sim.angle[i]);
-	potential_factor = 1.; // This is a derivative of the potential with respect to ui.qij
+
+	double uidr = ui.x*dx.x + ui.y*dx.y; 
+	double ujdr = uj.x*dx.x + uj.y*dx.y;
+	double sigma_eff = 1.0*(1 + 0.5*epsilon1*(uidr*uidr+ujdr*ujdr)/rr);
+	double rreffinv = sigma_eff*sigma_eff/rr;
+	double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
+
+	double tmp = 12.*reff12inv*epsilon1/sigma_eff;
+
+	
+
+	potential_factor = tmp*uidr/sqrt(rr); // This is a derivative of the potential with respect to ui.qij
+
 	sim.virial_pair_second +=  potential_factor * sintmi * sintmi * sintpi;
 
+
+	
 	double sintmj = sin(theta-sim.angle[j]);
 	double sintpj = sin(theta+sim.angle[j]);
-	double costmj = cos(theta-sim.angle[j]);
-	potential_factor = 1.; // This is a derivative of the potential with respect to uj.qij
+
+	potential_factor = tmp*ujdr/sqrt(rr); //  This is a derivative of the potential with respect to uj.qij
 	sim.virial_pair_third +=  potential_factor * sintmj * sintmj * sintpj;
+
       }
 
       
@@ -521,7 +542,7 @@ void write_phase_space(simulation_data const& sim)
   output<<"0.0 "<<sim.box_length.x<<endl;
   output<<"0.0 "<<sim.box_length.y<<endl;
   output<<"0.0 1.0"<<endl;
-  output<<"ITEM: ATOMS id x y z mux muy muz type"<<endl;
+  output<<"ITEM: ATOMS id x y z mux muy muz type "<<endl;
   // write the phase space data
   int liquid_or_wall;
   for (int i = 0; i < sim.N; ++i) {
@@ -623,7 +644,8 @@ void set_initial_phase_space(simulation_data& sim)
   double pi = 3.141592;
   for (int i = 0; i < sim.N; ++i) {
     double& ang = sim.angle[i];
-    ang = (logistic_map() - 0.5)*pi;
+    //ang = (logistic_map() - 0.5)*pi;
+    ang = 35.0/180*pi;
   }
   sim.total_momentum = coordinate_type(); // reset to zero
   double sum_angular_vels = 0;
@@ -970,13 +992,30 @@ int main(int argc, char **argv)
   write_phase_space(sim);
 
   int steps = sim.Tmax/sim.dt;
-  int thermostating_interval=(int)(.2/sim.dt);
+  int thermostating_interval=(int)(.1/sim.dt);
   int dump_interval=(int)(0.1/sim.dt);
-  cout << "Simulating " << steps << " steps.." << endl;
+  cout << "# simulating " << steps << " steps.." << endl;
 
   // calculate the inital force
   calculate_force_and_torque(sim);
 
+  sim.dt = 0.1*sim.dt;
+  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 2 LJ time units "<<sim.dt<<endl;
+  int highres_nr_steps = (int) (0.2/sim.dt);
+  cout<<"# ";
+  cout.flush();
+  for (int i = 0; i < highres_nr_steps; i++) {
+    sim.step++;
+    md_step(sim);
+    if ((i%10)==0) {thermostat(sim);}
+    if (i%(highres_nr_steps/10)==0) cout<<(int)i/(highres_nr_steps/10)*10<<"% ";
+    cout.flush();
+  }
+  cout<<endl;
+  sim.dt=atof(argv[3]); 
+  cout<<"# dt is set back to "<<sim.dt<<endl;
+  sim.step=0;
+  cout<<"# time is set to zero"<<endl;   
   // print at max 1000 theromodynamic values
   int next_print_interval = 0; //max(steps/10, 1);
 
