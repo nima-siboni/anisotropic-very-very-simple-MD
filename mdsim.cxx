@@ -644,7 +644,7 @@ void set_initial_phase_space(simulation_data& sim)
   double pi = 3.141592;
   for (int i = 0; i < sim.N; ++i) {
     double& ang = sim.angle[i];
-    //ang = (logistic_map() - 0.5)*pi;
+    //ang = rand_normal(0.0,1.0)*pi; //(logistic_map() - 0.5)*pi;
     ang = 35.0/180*pi;
   }
   sim.total_momentum = coordinate_type(); // reset to zero
@@ -652,9 +652,9 @@ void set_initial_phase_space(simulation_data& sim)
   for (int i = 0; i < sim.N; ++i) {
     coordinate_type& v = sim.velocity[i];
     double& angvel = sim.omega[i];
-    v.x = logistic_map() - 0.5;
-    v.y = logistic_map() - 0.5;
-    angvel = logistic_map() - 0.5;
+    v.x = rand_normal(0.0,1.0);
+    v.y = rand_normal(0.0,1.0);
+    angvel = rand_normal(0.0,1.0);
     sum_angular_vels += angvel;
     sim.total_momentum.x += v.x;
     sim.total_momentum.y += v.y;
@@ -992,15 +992,14 @@ int main(int argc, char **argv)
   write_phase_space(sim);
 
   int steps = sim.Tmax/sim.dt;
-  int thermostating_interval=(int)(.1/sim.dt);
-  int dump_interval=(int)(0.1/sim.dt);
+  int thermostating_interval=(int)(0.05/sim.dt);
+  int dump_interval=(int)(5.0/sim.dt);
   cout << "# simulating " << steps << " steps.." << endl;
 
   // calculate the inital force
   calculate_force_and_torque(sim);
-
   sim.dt = 0.1*sim.dt;
-  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 2 LJ time units "<<sim.dt<<endl;
+  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 0.2 LJ time units "<<sim.dt<<endl;
   int highres_nr_steps = (int) (0.2/sim.dt);
   cout<<"# ";
   cout.flush();
@@ -1025,7 +1024,7 @@ int main(int argc, char **argv)
       thermostat(sim);
     }
     if (i==(int) (sim.equilibration_before_wall_formation/sim.dt)){
-	define_walls(sim); cout<<"# walls are formed at timestep "<<i<<endl;
+    	define_walls(sim); cout<<"# walls are formed at timestep "<<i<<endl;
     }
     if (i%dump_interval==0) write_phase_space(sim);
 
