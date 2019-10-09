@@ -12,17 +12,10 @@
 #include <iomanip>
 #include <map>
 using namespace std;
-extern const double PI2=3.14159265359;
+extern const double PI2=3.14159265359*2;
 
 //?? dont forget to exclude forces between walls
 //?? thermostating the angular velocities
-double logistic_map()
-{
-  static double x = 0.5; // start value
-  double const mu = 3.99;
-  x = mu*x*(1 - x);
-  return x;
-}
 
 /**
  * this struct defines a coordinate in 2D
@@ -644,7 +637,7 @@ void set_initial_phase_space(simulation_data& sim)
   double pi = 3.141592;
   for (int i = 0; i < sim.N; ++i) {
     double& ang = sim.angle[i];
-    //ang = rand_normal(0.0,1.0)*pi; //(logistic_map() - 0.5)*pi;
+    //(logistic_mapi() - 0.5)*pi;
     ang = 35.0/180*pi;
   }
   sim.total_momentum = coordinate_type(); // reset to zero
