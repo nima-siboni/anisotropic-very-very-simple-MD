@@ -133,7 +133,7 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   //double uiuj = ui.x*uj.x + ui.y*uj.y ;
   double uidr = ui.x*dr.x + ui.y*dr.y; 
   double ujdr = uj.x*dr.x + uj.y*dr.y;
-  double sigma_eff = 1.0*(1 + 0.5*e1*(uidr*uidr+ujdr*ujdr)/rr);
+  double sigma_eff = 1.0/(1 - 0.5*e1*(uidr*uidr+ujdr*ujdr)/rr);
   double rreffinv = sigma_eff*sigma_eff/rr;
   double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
 
@@ -144,7 +144,7 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   fij.x += tmp*dr.x;
   fij.y += tmp*dr.y;
 
-  tmp = e1/sigma_eff;
+  tmp = e1*sigma_eff;
   // the first term of the eq. 10 in Physica A 328 (2003) 322-334
   fij.x *= tmp; 
   fij.y *= tmp;
@@ -164,7 +164,7 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   
   // the torque
   double crossproduct = -ui.x*dr.y + dr.x*ui.y; //r cross ui
-  tmp = 12.*e*reff12inv/rr/sigma_eff;
+  tmp = 12.*e*reff12inv/rr*sigma_eff;
   tauij = e1 * tmp * uidr * crossproduct ;
   
 }
@@ -305,11 +305,11 @@ void calculate_force_and_torque(simulation_data& sim)
 
 	double uidr = ui.x*dx.x + ui.y*dx.y; 
 	double ujdr = uj.x*dx.x + uj.y*dx.y;
-	double sigma_eff = 1.0*(1 + 0.5*epsilon1*(uidr*uidr+ujdr*ujdr)/rr);
+	double sigma_eff = 1.0/(1 - 0.5*epsilon1*(uidr*uidr+ujdr*ujdr)/rr);
 	double rreffinv = sigma_eff*sigma_eff/rr;
 	double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
 
-	double tmp = 12.*reff12inv*epsilon1/sigma_eff;
+	double tmp = 12.*reff12inv*epsilon1*sigma_eff;
 
 	
 
@@ -991,9 +991,9 @@ int main(int argc, char **argv)
 
   // calculate the inital force
   calculate_force_and_torque(sim);
-  sim.dt = 0.1*sim.dt;
-  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 0.2 LJ time units "<<sim.dt<<endl;
-  int highres_nr_steps = (int) (0.2/sim.dt);
+  sim.dt = 0.01*sim.dt;
+  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 0.1 LJ time units "<<sim.dt<<endl;
+  int highres_nr_steps = (int) (0.4/sim.dt);
   cout<<"# ";
   cout.flush();
   for (int i = 0; i < highres_nr_steps; i++) {
@@ -1001,6 +1001,7 @@ int main(int argc, char **argv)
     md_step(sim);
     if ((i%10)==0) {thermostat(sim);}
     if (i%(highres_nr_steps/10)==0) cout<<(int)i/(highres_nr_steps/10)*10<<"% ";
+    if (i%1000==0) write_phase_space(sim);
     cout.flush();
   }
   cout<<endl;
