@@ -46,7 +46,8 @@ struct simulation_data
   int    step;  // current simulation step
   double Tmax; // the total simulation time in LJ units
   double potential_energy; // per particle
-  double kinetic_energy;   // per particle
+  double kinetic_energy;   // total 
+  double kinetic_energy_rot;   // total 
   double temperature;
   double temperature_rot;
   double pressure;
@@ -116,7 +117,7 @@ struct simulation_data
 // }
 
 
-void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const ui, coordinate_type const uj, double const e, double const e1, coordinate_type& fij, double &tauij){
+void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const ui, coordinate_type const uj, double const e, double const e1, coordinate_type& fij, double &tauij, double &epot){
 
   // Note that here dr is r_j-ri
 
@@ -133,10 +134,12 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   //double uiuj = ui.x*uj.x + ui.y*uj.y ;
   double uidr = ui.x*dr.x + ui.y*dr.y; 
   double ujdr = uj.x*dr.x + uj.y*dr.y;
-  double sigma_eff = 1.0/(1 - 0.5*e1*(uidr*uidr+ujdr*ujdr)/rr);
+  double xi = 1-0.5*e1*(uidr*uidr+ujdr*ujdr)/rr;
+  double sigma_eff = 1.0/sqrt(xi);
   double rreffinv = sigma_eff*sigma_eff/rr;
   double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
 
+  epot = 0.5*reff12inv; // half of the energy is associated with the particle i
   fij.x =  uidr*ui.x + ujdr*uj.x;
   fij.y =  uidr*ui.y + ujdr*uj.y;
 
@@ -144,7 +147,7 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   fij.x += tmp*dr.x;
   fij.y += tmp*dr.y;
 
-  tmp = e1*sigma_eff;
+  tmp = 0.5*e1/xi;
   // the first term of the eq. 10 in Physica A 328 (2003) 322-334
   fij.x *= tmp; 
   fij.y *= tmp;
@@ -164,7 +167,7 @@ void force_and_torque_on_i_by_j(coordinate_type const dr, coordinate_type const 
   
   // the torque
   double crossproduct = -ui.x*dr.y + dr.x*ui.y; //r cross ui
-  tmp = 12.*e*reff12inv/rr*sigma_eff;
+  tmp = 6.*e*reff12inv/rr/xi;
   tauij = e1 * tmp * uidr * crossproduct ;
   
 }
@@ -193,7 +196,7 @@ void equality(simulation_data& sim, simulation_data& sim0)
 void calculate_force_and_torque(simulation_data& sim)
 {
   // reset the potential energy, as it will be recalcuated in this step
-  //  double epot = 0;
+  sim.potential_energy = 0;
   // reset the force and torque array
   sim.virial_pair_xx =  sim.virial_pair_yy =  sim.virial_pair_yx =  sim.virial_pair_xy = 0;
   sim.virial_xx =  sim.virial_yy =  sim.virial_yx =  sim.virial_xy = 0;
@@ -265,10 +268,11 @@ void calculate_force_and_torque(simulation_data& sim)
       //epot += pot;
 
       coordinate_type f;
-      double tau=0;
+      double tau = 0;
+      double epot = 0;
       // f is here the force on particle i by particle j, same is true for tau
       // note that dx should be dx = xi-xj
-      force_and_torque_on_i_by_j(dx, ui, uj, epsilon, epsilon1, f, tau);
+      force_and_torque_on_i_by_j(dx, ui, uj, epsilon, epsilon1, f, tau, epot);
 
       
       // set the force value 
@@ -276,7 +280,7 @@ void calculate_force_and_torque(simulation_data& sim)
       //cout<<f.x<<endl;
       sim.force[i].y += f.y;
       sim.torque[i]+=tau;
-
+      sim.potential_energy += epot;
       // Here we calculate the different components of the virial expression for EACH PAIR;
       // i.e. we are calculating f_{ij}.r_{ij}
       // here I am including only those pair which are liquid
@@ -308,7 +312,6 @@ void calculate_force_and_torque(simulation_data& sim)
 	double sigma_eff = 1.0/(1 - 0.5*epsilon1*(uidr*uidr+ujdr*ujdr)/rr);
 	double rreffinv = sigma_eff*sigma_eff/rr;
 	double reff12inv = rreffinv *rreffinv *rreffinv *rreffinv *rreffinv *rreffinv ;
-
 	double tmp = 12.*reff12inv*epsilon1*sigma_eff;
 
 	
@@ -353,7 +356,6 @@ void calculate_force_and_torque(simulation_data& sim)
   }
   
   // we want the potential energy per particle
-  sim.potential_energy = 0;//??
 
    double area = 0;
    if (sim.wall_flag==0 || sim.wall_flag ==1)
@@ -568,10 +570,11 @@ void thermostat(simulation_data& sim)
     }
   }
   // missing factor of two, and divide by the number of particles
+  sim.kinetic_energy = 0.5*(ekin_xx+ekin_yy);
+  sim.kinetic_energy_rot = 0.5*ekin_rot;
   ekin_xx /= 1.*sim.nr_liq;
   ekin_yy /= 1.*sim.nr_liq;
   ekin_rot /= 1.*sim.nr_liq;
-  sim.kinetic_energy = 0.5*(ekin_xx+ekin_yy);
 
   if (sim.shear_rate==0){
     sim.temperature = 0.5*(ekin_xx+ekin_yy);
@@ -630,15 +633,15 @@ void set_initial_phase_space(simulation_data& sim)
   int Ny = (int) sqrt(sim.N);
   for(int i = 0; i < Nx; ++i) {
     for(int j = 0; j < Ny; ++j) {
-      sim.position[i + Nx*j].x = a*(i+0.5);
+      sim.position[i + Nx*j].x = a*(i+0.5)+0.5*a*(j%2);
+      if (sim.position[i + Nx*j].x > sim.box_length.x) sim.position[i + Nx*j].x -=sim.box_length.x;
       sim.position[i + Nx*j].y = a*(j+0.5);
     }
   }
   double pi = 3.141592;
   for (int i = 0; i < sim.N; ++i) {
     double& ang = sim.angle[i];
-    //(logistic_mapi() - 0.5)*pi;
-    ang = 35.0/180*pi;
+    ang = (45.0/180+rand_normal(0.0,1.0)/180)*pi;
   }
   sim.total_momentum = coordinate_type(); // reset to zero
   double sum_angular_vels = 0;
@@ -825,6 +828,7 @@ void output_thermodynamic_variables(simulation_data& sim){
 		  << "\n" << "# 21- virial first term"
 		  << "\n" << "# 22- virial second term"
 		  << "\n" << "# 23- virial third term"
+		  << "\n" << "# 24- kinetic energy rotational"
 		  << endl;
   }
   else{
@@ -849,10 +853,12 @@ void output_thermodynamic_variables(simulation_data& sim){
     }
   }
   // missing factor of two, and divide by the number of particles
+  sim.kinetic_energy = 0.5*(ekin_xx+ekin_yy);
+  sim.kinetic_energy_rot = 0.5*ekin_rot;
+ 
   ekin_xx /= 1.*sim.nr_liq;
   ekin_yy /= 1.*sim.nr_liq;
   ekin_rot /= 1.*sim.nr_liq;
-  sim.kinetic_energy = 0.5*(ekin_xx+ekin_yy);
 
   if (sim.shear_rate==0){
     sim.temperature = 0.5*(ekin_xx+ekin_yy);
@@ -917,6 +923,7 @@ void output_thermodynamic_variables(simulation_data& sim){
 		 << " " << sim.virial_pair_first
 		 << " " << sim.virial_pair_second
 		 << " " << sim.virial_pair_third
+		 << " " << sim.kinetic_energy_rot
 		 << endl;
       
 }
@@ -991,8 +998,8 @@ int main(int argc, char **argv)
 
   // calculate the inital force
   calculate_force_and_torque(sim);
-  sim.dt = 0.01*sim.dt;
-  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 0.1 LJ time units "<<sim.dt<<endl;
+  sim.dt = 0.1*sim.dt;
+  cout<<"# dt is set to one orders of magnitude smaller value and a high-resolution initial integration is done for 0.4 LJ time units "<<sim.dt<<endl;
   int highres_nr_steps = (int) (0.4/sim.dt);
   cout<<"# ";
   cout.flush();
